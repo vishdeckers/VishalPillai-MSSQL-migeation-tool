@@ -1,0 +1,19 @@
+# Migration run data and generated reports
+MigrationState.json
+MigrationState.json.*
+reports/
+*.bak
+*.trn
+*.mdf
+*.ldf
+
+# Local web-host data and credentials
+auth.json
+DbMigrationWeb/
+WebHost-*.log
+
+# Local editor and PowerShell artifacts
+.vscode/
+*.ps1xml
+*.tmp
+*.lock
