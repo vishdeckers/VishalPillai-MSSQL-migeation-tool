@@ -353,6 +353,36 @@ Describe 'Migration progress events' {
     }
 }
 
+Describe 'Migration reports' {
+    It 'writes valid CSV content when there are no rows to report' {
+        $outputPath = Join-Path $TestDrive 'reports'
+
+        $report = Write-MigrationReports -Rows @() -OutputPath $outputPath -Name 'Validation'
+
+        $report.CsvPath | Should -Exist
+        $report.HtmlPath | Should -Exist
+        $csvContent = Get-Content -LiteralPath $report.CsvPath -Raw
+        $csvContent | Should -Match 'Message'
+        $csvContent | Should -Match 'No records'
+    }
+
+    It 'creates management-friendly HTML with styled status summaries' {
+        $outputPath = Join-Path $TestDrive 'management-reports'
+        $rows = @(
+            [pscustomobject]@{ Source = 'source'; Target = 'target'; Database = 'AppDb'; Stage = 'Restore'; Status = 'Failed'; Message = 'Restore failed.' },
+            [pscustomobject]@{ Source = 'source'; Target = 'target'; Database = 'AppDb'; Stage = 'Validate'; Status = 'Completed'; Message = 'Validation passed.' }
+        )
+
+        $report = Write-MigrationReports -Rows $rows -OutputPath $outputPath -Name 'Migration'
+        $html = Get-Content -LiteralPath $report.HtmlPath -Raw
+
+        $html | Should -Match '<style>'
+        $html | Should -Match 'summary-card'
+        $html | Should -Match 'status-fail'
+        $html | Should -Match 'status-pass'
+    }
+}
+
 Describe 'Database filtering' {
     It 'excludes system databases and configured exclusions' {
         Mock Get-DbaDatabase -ModuleName DbMigration.Core {

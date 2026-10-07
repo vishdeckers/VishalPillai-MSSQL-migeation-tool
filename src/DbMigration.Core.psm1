@@ -524,14 +524,221 @@ function Write-MigrationReports {
     $baseName = "$Name-$timestamp-$runSuffix"
     $csvPath = Join-Path $OutputPath "$baseName.csv"
     $htmlPath = Join-Path $OutputPath "$baseName.html"
+    $generatedAt = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+
     if ($Rows.Count -gt 0) {
         $Rows | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding utf8
-        $html = $Rows | ConvertTo-Html -Title "$Name report" -PreContent "<h1>$Name report</h1><p>Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</p>" | Out-String
     }
     else {
-        @('"Message"', '"No records"') | Set-Content -LiteralPath $csvPath -Encoding utf8
-        $html = "<html><head><title>$Name report</title></head><body><h1>$Name report</h1><p>No records.</p></body></html>"
+        [pscustomobject]@{ Message = 'No records' } | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding utf8
     }
+
+    $statusTotals = @{}
+    foreach ($row in @($Rows)) {
+        $status = [string]($row.Status)
+        if (-not $status) {
+            $status = 'Unknown'
+        }
+        $statusTotals[$status] = [int]($statusTotals[$status] + 1)
+    }
+
+    $columns = @('Source', 'Target', 'Database', 'Stage', 'Status', 'Message')
+    $headerCells = @()
+    foreach ($columnName in $columns) {
+        if ($Rows.Count -eq 0 -or ($Rows[0].PSObject.Properties.Name -contains $columnName)) {
+            $headerCells += "<th>$columnName</th>"
+        }
+    }
+    if ($headerCells.Count -eq 0) {
+        $headerCells = @('<th>Details</th>')
+    }
+
+    $bodyRows = @()
+    if ($Rows.Count -gt 0) {
+        foreach ($row in $Rows) {
+            $cells = @()
+            foreach ($columnName in $columns) {
+                if ($row.PSObject.Properties.Name -contains $columnName) {
+                    $value = if ($null -ne $row.$columnName) { [string]$row.$columnName } else { '' }
+                    $escapedValue = [System.Security.SecurityElement]::Escape($value)
+                    if ($columnName -eq 'Status') {
+                        $statusClass = switch ($value) {
+                            'Passed' { 'status-pass' }
+                            'Completed' { 'status-pass' }
+                            'Failed' { 'status-fail' }
+                            'Skipped' { 'status-skip' }
+                            'Paused' { 'status-warn' }
+                            'Started' { 'status-inprogress' }
+                            'InProgress' { 'status-inprogress' }
+                            default { 'status-neutral' }
+                        }
+                        $cells += "<td class=`"status-cell`"><span class=`"status-badge $statusClass`">$escapedValue</span></td>"
+                    }
+                    else {
+                        $cells += "<td>$escapedValue</td>"
+                    }
+                }
+            }
+            if ($cells.Count -eq 0) {
+                $cells += "<td>$([System.Security.SecurityElement]::Escape([string]$row))</td>"
+            }
+            $bodyRows += "<tr>$($cells -join '')</tr>"
+        }
+    }
+    else {
+        $bodyRows += '<tr><td colspan="6" class="empty-state">No records.</td></tr>'
+    }
+
+    $summaryCards = @(
+        "<div class=""summary-card total""><span class=""summary-label"">Total</span><strong>$($Rows.Count)</strong></div>",
+        "<div class=""summary-card pass""><span class=""summary-label"">Passed</span><strong>$([int]($statusTotals['Passed'] + $statusTotals['Completed']))</strong></div>",
+        "<div class=""summary-card fail""><span class=""summary-label"">Failed</span><strong>$([int]($statusTotals['Failed']))</strong></div>",
+        "<div class=""summary-card skip""><span class=""summary-label"">Skipped</span><strong>$([int]($statusTotals['Skipped']))</strong></div>"
+    )
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>$Name report</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Segoe UI, Arial, sans-serif;
+            background: #f3f6fb;
+            color: #1f2937;
+        }
+        .report {
+            max-width: 1300px;
+            margin: 32px auto;
+            background: #ffffff;
+            border: 1px solid #dfe7f1;
+            border-radius: 14px;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+        }
+        .report-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+            color: #fff;
+            padding: 28px 32px;
+        }
+        .report-header h1 {
+            margin: 0 0 6px 0;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        .report-meta {
+            font-size: 0.95rem;
+            opacity: 0.9;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            padding: 24px 32px 8px 32px;
+        }
+        .summary-card {
+            border: 1px solid #dfe7f1;
+            border-radius: 12px;
+            padding: 16px 18px;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .summary-card strong {
+            font-size: 1.7rem;
+            line-height: 1;
+        }
+        .summary-label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #475569;
+        }
+        .summary-card.total { border-left: 6px solid #2563eb; }
+        .summary-card.pass { border-left: 6px solid #16a34a; }
+        .summary-card.fail { border-left: 6px solid #dc2626; }
+        .summary-card.skip { border-left: 6px solid #f59e0b; }
+        .table-wrap {
+            padding: 0 32px 32px 32px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        th, td {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 12px 10px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: #edf2ff;
+            color: #1e293b;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 0.75rem;
+        }
+        tbody tr:nth-child(even) { background: #fafcff; }
+        tbody tr:hover { background: #eff6ff; }
+        .status-cell { text-align: center; }
+        .status-badge {
+            display: inline-block;
+            min-width: 78px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .status-pass { background: #dcfce7; color: #166534; }
+        .status-fail { background: #fee2e2; color: #991b1b; }
+        .status-skip { background: #fef3c7; color: #92400e; }
+        .status-warn { background: #e0f2fe; color: #0f766e; }
+        .status-inprogress { background: #e0e7ff; color: #3730a3; }
+        .status-neutral { background: #e2e8f0; color: #334155; }
+        .empty-state {
+            text-align: center;
+            padding: 24px 12px;
+            color: #475569;
+            font-style: italic;
+        }
+        @media (max-width: 700px) {
+            .report-header, .summary-grid, .table-wrap { padding-left: 16px; padding-right: 16px; }
+            .report-header h1 { font-size: 1.5rem; }
+            table { display: block; overflow-x: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="report">
+        <div class="report-header">
+            <h1>$Name report</h1>
+            <div class="report-meta">Generated $generatedAt</div>
+        </div>
+        <div class="summary-grid">
+            $($summaryCards -join '')
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>$($headerCells -join '')</tr>
+                </thead>
+                <tbody>
+                    $($bodyRows -join '')
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+"@
+
     Set-Content -LiteralPath $htmlPath -Value $html -Encoding utf8
     [pscustomobject]@{ CsvPath = $csvPath; HtmlPath = $htmlPath }
 }
